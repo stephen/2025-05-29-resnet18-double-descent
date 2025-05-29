@@ -1,6 +1,119 @@
-def main():
-    print("Hello from 2025-05-29-resnet18-double-descent!")
+from jaxtyping import Float
+from dataclasses import asdict, dataclass, field
+import torch as t
+import torchvision
+from pathlib import Path
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+import wandb
 
+device = t.device('mps') if t.backends.mps.is_available() else t.device('cpu')
+
+TRANSFORM = torchvision.transforms.Compose(
+    [
+        torchvision.transforms.ToTensor(),
+        # https://github.com/kuangliu/pytorch-cifar/issues/19
+        torchvision.transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.247, 0.243, 0.261]),
+    ]
+)
+
+def get_cifar() -> tuple[torchvision.datasets.cifar.CIFAR10, torchvision.datasets.cifar.CIFAR10]:
+    training = torchvision.datasets.CIFAR10(Path.cwd() / "data", download=True, train=True, transform=TRANSFORM)
+    testing = torchvision.datasets.CIFAR10(Path.cwd() / "data", download=True, train=False, transform=TRANSFORM)
+
+    return training, testing
+
+train_set, test_set = get_cifar()
+
+@dataclass
+class ModelArgs:
+    num_classes: int = 10
+    width_per_group: int = 64
+
+@dataclass
+class TrainingArgs:
+    model_args: ModelArgs = field(default_factory=ModelArgs)
+    batch_size: int = 128
+    epochs: int = 4_000
+
+def make_resnet18(args: ModelArgs) -> torchvision.models.ResNet:
+    # Note: the paper mentions using bn -> relu -> conv (preactivation) resnet, but we use postactivation resnet.
+    # https://gitlab.com/harvard-machine-learning/double-descent/-/blob/master/models/resnet18k.py?ref_type=heads#L8
+    # I stuck with postactivation resnet18 because it's the default in pytorch.
+    return torchvision.models.resnet18(**asdict(args))
+
+class Trainer:
+    def __init__(self, args: TrainingArgs):
+        self.args = args
+        pass
+
+    def setup(self):
+        self.model = make_resnet18(self.args.model_args).to(device)
+        self.optimizer = t.optim.Adam(self.model.parameters(), lr=1e-4)
+        self.train_set = DataLoader(train_set, batch_size=self.args.batch_size, shuffle=True)
+        self.test_set = DataLoader(test_set, batch_size=self.args.batch_size, shuffle=False)
+        self.samples_trained = 0
+
+        wandb.init(project="2025-05-29-resnet18-double-descent", config=asdict(self.args))
+        wandb.watch(self.model, log="all")
+
+        pass
+
+    def train_epoch(self, imgs: Float[t.Tensor, "b c w h"], labels: Float[t.Tensor, "b"]):
+        imgs, labels = imgs.to(device), labels.to(device)
+
+        logits = self.model(imgs)
+
+        loss = t.nn.functional.cross_entropy(logits, labels)
+        loss.backward()
+
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+
+
+        self.samples_trained += len(imgs)
+
+        wandb.log({"loss": loss}, step=self.samples_trained)
+        return loss
+
+    @t.inference_mode()
+    def evaluate(self):
+        self.model.eval()
+
+        correct, total = 0.0, 0.0
+
+        for imgs, labels in tqdm(self.test_set, desc="evaluating"):
+            imgs, labels = imgs.to(device), labels.to(device)
+            logits = self.model(imgs)
+            correct += (logits.argmax(-1) == labels).sum().item()
+            total += len(imgs)
+
+        accuracy = correct / total
+        wandb.log({"accuracy": accuracy}, step=self.samples_trained)
+        return accuracy
+
+    def train(self):
+        self.setup()
+
+        accuracy = self.evaluate()
+
+        pbar = tqdm(range(self.args.epochs), desc="training")
+        for epoch in pbar:
+            self.model.train()
+            loss = 0.0
+            for imgs, labels in tqdm(self.train_set):
+                loss = self.train_epoch(imgs, labels)
+
+            accuracy = self.evaluate()
+            pbar.set_postfix(loss=f"{loss:.3f}", accuracy=f"{accuracy:.2f}", ex_seen=f"{self.samples_trained:06}")
+
+        wandb.finish()
+
+def main():
+    print("running on", device)
+    print("checking that tensors work", t.ones((1, 2, 3)).to(device).bool().all())
+    trainer = Trainer(TrainingArgs())
+    trainer.train()
 
 if __name__ == "__main__":
     main()
