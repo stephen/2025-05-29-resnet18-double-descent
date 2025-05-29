@@ -108,10 +108,12 @@ class Trainer:
                 train_loss = self.train_epoch(imgs, labels)
                 pbar.set_postfix(loss=f"{train_loss:.3f}", ex_seen=f"{self.samples_trained:06}")
 
+                wandb.log({"train_loss": train_loss, "lr": self.optimizer.param_groups[0]['lr']}, step=self.samples_trained)
+
             test_loss, test_accuracy = self.evaluate()
 
             pbar.set_postfix(loss=f"{train_loss:.3f}", accuracy=f"{test_accuracy:.2f}", ex_seen=f"{self.samples_trained:06}")
-            wandb.log({"test_accuracy": test_accuracy, "test_loss": test_loss, "train_loss": train_loss}, step=epoch)
+            wandb.log({"test_accuracy": test_accuracy, "test_loss": test_loss, "epoch": epoch}, step=self.samples_trained)
 
         wandb.finish()
 
