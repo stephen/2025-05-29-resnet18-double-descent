@@ -40,7 +40,9 @@ def make_resnet18(args: ModelArgs) -> torchvision.models.ResNet:
     # Note: the paper mentions using bn -> relu -> conv (preactivation) resnet, but we use postactivation resnet.
     # https://gitlab.com/harvard-machine-learning/double-descent/-/blob/master/models/resnet18k.py?ref_type=heads#L8
     # I stuck with postactivation resnet18 because it's the default in pytorch.
-    return torchvision.models.resnet18(**asdict(args))
+    model = torchvision.models.resnet18(**asdict(args))
+    # model = t.compile(model) # XXX: I tried to get this to work but ran into errors.
+    return model # type: ignore
 
 class Trainer:
     def __init__(self, args: TrainingArgs):
@@ -50,12 +52,12 @@ class Trainer:
     def setup(self):
         self.model = make_resnet18(self.args.model_args).to(device)
         self.optimizer = t.optim.Adam(self.model.parameters(), lr=1e-4)
-        self.train_set = DataLoader(train_set, batch_size=self.args.batch_size, shuffle=True)
-        self.test_set = DataLoader(test_set, batch_size=self.args.batch_size, shuffle=False)
+        self.train_set = DataLoader(train_set, batch_size=self.args.batch_size, shuffle=True, num_workers=8, persistent_workers=True)
+        self.test_set = DataLoader(test_set, batch_size=self.args.batch_size * 2, shuffle=False, num_workers=2, persistent_workers=True)
         self.samples_trained = 0
 
         wandb.init(project="2025-05-29-resnet18-double-descent", config=asdict(self.args))
-        wandb.watch(self.model, log="all")
+        wandb.watch(self.model, log="gradients")
 
         pass
 
@@ -73,39 +75,43 @@ class Trainer:
 
         self.samples_trained += len(imgs)
 
-        wandb.log({"loss": loss}, step=self.samples_trained)
         return loss
 
     @t.inference_mode()
     def evaluate(self):
         self.model.eval()
 
-        correct, total = 0.0, 0.0
+        correct, total, losses = 0.0, 0.0, []
 
         for imgs, labels in tqdm(self.test_set, desc="evaluating"):
             imgs, labels = imgs.to(device), labels.to(device)
             logits = self.model(imgs)
+
+            losses.append(t.nn.functional.cross_entropy(logits, labels).item())
             correct += (logits.argmax(-1) == labels).sum().item()
             total += len(imgs)
 
         accuracy = correct / total
-        wandb.log({"accuracy": accuracy}, step=self.samples_trained)
-        return accuracy
+        loss = sum(losses) / len(losses)
+        return loss, accuracy
 
     def train(self):
         self.setup()
 
-        accuracy = self.evaluate()
+        test_accuracy = self.evaluate()
 
-        pbar = tqdm(range(self.args.epochs), desc="training")
-        for epoch in pbar:
+        for epoch in tqdm(range(self.args.epochs), desc="epochs"):
+            pbar = tqdm(self.train_set, desc="training")
             self.model.train()
-            loss = 0.0
-            for imgs, labels in tqdm(self.train_set):
-                loss = self.train_epoch(imgs, labels)
+            train_loss = 0.0
+            for imgs, labels in pbar:
+                train_loss = self.train_epoch(imgs, labels)
+                pbar.set_postfix(loss=f"{train_loss:.3f}", ex_seen=f"{self.samples_trained:06}")
 
-            accuracy = self.evaluate()
-            pbar.set_postfix(loss=f"{loss:.3f}", accuracy=f"{accuracy:.2f}", ex_seen=f"{self.samples_trained:06}")
+            test_loss, test_accuracy = self.evaluate()
+
+            pbar.set_postfix(loss=f"{train_loss:.3f}", accuracy=f"{test_accuracy:.2f}", ex_seen=f"{self.samples_trained:06}")
+            wandb.log({"test_accuracy": test_accuracy, "test_loss": test_loss, "train_loss": train_loss}, step=epoch)
 
         wandb.finish()
 
