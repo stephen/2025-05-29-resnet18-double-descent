@@ -7,6 +7,8 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import wandb
 
+from resnet18 import ResNet
+
 device = t.device('mps') if t.backends.mps.is_available() else t.device('cpu')
 
 TRANSFORM = torchvision.transforms.Compose(
@@ -28,7 +30,7 @@ train_set, test_set = get_cifar()
 @dataclass
 class ModelArgs:
     num_classes: int = 10
-    width_per_group: int = 64
+    k: int = 64
 
 @dataclass
 class TrainingArgs:
@@ -40,7 +42,7 @@ def make_resnet18(args: ModelArgs) -> torchvision.models.ResNet:
     # Note: the paper mentions using bn -> relu -> conv (preactivation) resnet, but we use postactivation resnet.
     # https://gitlab.com/harvard-machine-learning/double-descent/-/blob/master/models/resnet18k.py?ref_type=heads#L8
     # I stuck with postactivation resnet18 because it's the default in pytorch.
-    model = torchvision.models.resnet18(**asdict(args))
+    model = ResNet(**asdict(args))
     # model = t.compile(model) # XXX: I tried to get this to work but ran into errors.
     return model # type: ignore
 
@@ -61,7 +63,7 @@ class Trainer:
 
         pass
 
-    def train_epoch(self, imgs: Float[t.Tensor, "b c w h"], labels: Float[t.Tensor, "b"]):
+    def train_epoch(self, imgs: Float[t.Tensor, "b c w h"], labels: Float[t.Tensor, "b"]): # type: ignore
         imgs, labels = imgs.to(device), labels.to(device)
 
         logits = self.model(imgs)
@@ -120,7 +122,9 @@ class Trainer:
 def main():
     print("running on", device)
     print("checking that tensors work", t.ones((1, 2, 3)).to(device).bool().all())
-    trainer = Trainer(TrainingArgs())
+    trainer = Trainer(TrainingArgs(model_args=ModelArgs(
+        k=33,
+    )))
     trainer.train()
 
 if __name__ == "__main__":
