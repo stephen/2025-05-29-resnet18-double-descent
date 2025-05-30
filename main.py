@@ -178,6 +178,9 @@ def main():
 
     with mp.Pool(processes=gpu_count) as pool:
         pool.starmap(train, jobs)
+
+    print("group:", run_group_name)
+    print("ended at:", datetime.now().strftime('%Y-%m-%dT%H-%M-%S'))
     sys.exit(0)
 
 if __name__ == "__main__":
