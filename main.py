@@ -1,3 +1,5 @@
+import copy
+import multiprocessing as mp
 import sys
 from jaxtyping import Float
 from dataclasses import asdict, dataclass, field
@@ -7,10 +9,11 @@ from pathlib import Path
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import wandb
+from typing import Optional
 
 from resnet18 import ResNet
 
-device = t.device('mps') if t.backends.mps.is_available() else t.device('cpu')
+default_device = t.device('mps') if t.backends.mps.is_available() else t.device('cpu')
 
 TRANSFORM = torchvision.transforms.Compose(
     [
@@ -39,6 +42,8 @@ class TrainingArgs:
     batch_size: int = 128
     epochs: int = 4_000
 
+    device: t.device = default_device
+
 def make_resnet18(args: ModelArgs) -> torchvision.models.ResNet:
     # Note: the paper mentions using bn -> relu -> conv (preactivation) resnet, but we use postactivation resnet.
     # https://gitlab.com/harvard-machine-learning/double-descent/-/blob/master/models/resnet18k.py?ref_type=heads#L8
@@ -48,15 +53,15 @@ def make_resnet18(args: ModelArgs) -> torchvision.models.ResNet:
     return model # type: ignore
 
 class Trainer:
-    def __init__(self, args: TrainingArgs):
+    def __init__(self, args: TrainingArgs, device: t.device = default_device):
         self.args = args
         pass
 
     def setup(self):
-        self.model = make_resnet18(self.args.model_args).to(device)
+        self.model = make_resnet18(self.args.model_args).to(default_device)
         self.optimizer = t.optim.Adam(self.model.parameters(), lr=1e-4)
-        self.train_set = DataLoader(train_set, batch_size=self.args.batch_size, shuffle=True, num_workers=8, persistent_workers=True)
-        self.test_set = DataLoader(test_set, batch_size=self.args.batch_size * 2, shuffle=False, num_workers=2, persistent_workers=True)
+        self.train_set = DataLoader(train_set, batch_size=self.args.batch_size, shuffle=True)
+        self.test_set = DataLoader(test_set, batch_size=self.args.batch_size * 2, shuffle=False)
         self.samples_trained = 0
 
         wandb.init(project="2025-05-29-resnet18-double-descent", config=asdict(self.args))
@@ -65,7 +70,7 @@ class Trainer:
 
     def teardown(self):
         del self.train_set, self.test_set, self.optimizer, self.model
-        if device.type == "cuda":
+        if default_device.type == "cuda":
             t.cuda.empty_cache()
 
     def __enter__(self):
@@ -77,7 +82,7 @@ class Trainer:
         return False
 
     def train_epoch(self, imgs: Float[t.Tensor, "b c w h"], labels: Float[t.Tensor, "b"]): # type: ignore
-        imgs, labels = imgs.to(device), labels.to(device)
+        imgs, labels = imgs.to(default_device), labels.to(default_device)
 
         logits = self.model(imgs)
 
@@ -99,7 +104,7 @@ class Trainer:
         correct, total, losses = 0.0, 0.0, []
 
         for imgs, labels in tqdm(self.test_set, desc="evaluating"):
-            imgs, labels = imgs.to(device), labels.to(device)
+            imgs, labels = imgs.to(default_device), labels.to(default_device)
             logits = self.model(imgs)
 
             losses.append(t.nn.functional.cross_entropy(logits, labels).item())
@@ -132,21 +137,30 @@ class Trainer:
 
         wandb.finish()
 
-def main():
-    print("running on", device)
-    print("checking that tensors work", t.ones((1, 2, 3)).to(device).bool().all())
+def train(args: TrainingArgs, rank: int):
+    args.device = t.device(f"cuda:{rank}") if t.cuda.is_available() else default_device
 
-    k = 1
-
-    with Trainer(TrainingArgs(
-        model_args=ModelArgs(k=k),
-    )) as trainer:
+    with Trainer(args) as trainer:
         trainer.train()
 
-        path = f"data/run-k-{k}.pth"
+        path = f"data/run-k-{args.model_args.k}.pth"
         t.save(trainer.model.state_dict(), path)
         print(f"saved to {path=}")
-    sys.exit(0)
+
+def main():
+    print("running on", default_device)
+    print("checking that tensors work", t.ones((1, 2, 3)).to(default_device).bool().all())
+
+    gpu_count = t.cuda.device_count() if t.cuda.is_available() else 4 # if mps, we fake it.
+    print("gpu count:", gpu_count)
+
+    jobs = [
+        (TrainingArgs(model_args=ModelArgs(k=k)), k % gpu_count)
+        for k in range(1, 65)
+    ]
+
+    with mp.Pool(processes=gpu_count) as pool:
+        pool.starmap(train, jobs)
 
 if __name__ == "__main__":
     main()
