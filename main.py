@@ -1,4 +1,4 @@
-import copy
+from datetime import datetime
 import multiprocessing as mp
 import sys
 from jaxtyping import Float
@@ -42,6 +42,9 @@ class TrainingArgs:
     batch_size: int = 128
     epochs: int = 4_000
 
+    wandb_group_name: Optional[str] = None
+    wandb_run_name: Optional[str] = None
+
     device: t.device = default_device
 
 def make_resnet18(args: ModelArgs) -> torchvision.models.ResNet:
@@ -64,7 +67,12 @@ class Trainer:
         self.test_set = DataLoader(test_set, batch_size=self.args.batch_size * 2, shuffle=False)
         self.samples_trained = 0
 
-        wandb.init(project="2025-05-29-resnet18-double-descent", config=asdict(self.args))
+        wandb.init(
+            project="2025-05-29-resnet18-double-descent",
+            config=asdict(self.args),
+            group=self.args.wandb_group_name,
+            name=self.args.wandb_run_name,
+        )
         wandb.watch(self.model, log="gradients")
 
 
@@ -154,13 +162,23 @@ def main():
     gpu_count = t.cuda.device_count() if t.cuda.is_available() else 4 # if mps, we fake it.
     print("gpu count:", gpu_count)
 
+    run_group_name = datetime.now().strftime('%Y-%m-%dT%H-%M-%S')
+
     jobs = [
-        (TrainingArgs(model_args=ModelArgs(k=k)), k % gpu_count)
+        (
+            TrainingArgs(
+                model_args=ModelArgs(k=k),
+                wandb_group_name=run_group_name,
+                wandb_run_name=f"{k=}",
+            ),
+            k % gpu_count,
+        )
         for k in range(1, 65)
     ]
 
     with mp.Pool(processes=gpu_count) as pool:
         pool.starmap(train, jobs)
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()
