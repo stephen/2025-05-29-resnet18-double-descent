@@ -1,3 +1,4 @@
+import sys
 from jaxtyping import Float
 from dataclasses import asdict, dataclass, field
 import torch as t
@@ -61,7 +62,19 @@ class Trainer:
         wandb.init(project="2025-05-29-resnet18-double-descent", config=asdict(self.args))
         wandb.watch(self.model, log="gradients")
 
-        pass
+
+    def teardown(self):
+        del self.train_set, self.test_set, self.optimizer, self.model
+        if device.type == "cuda":
+            t.cuda.empty_cache()
+
+    def __enter__(self):
+        self.setup()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.teardown()
+        return False
 
     def train_epoch(self, imgs: Float[t.Tensor, "b c w h"], labels: Float[t.Tensor, "b"]): # type: ignore
         imgs, labels = imgs.to(device), labels.to(device)
@@ -122,10 +135,18 @@ class Trainer:
 def main():
     print("running on", device)
     print("checking that tensors work", t.ones((1, 2, 3)).to(device).bool().all())
-    trainer = Trainer(TrainingArgs(model_args=ModelArgs(
-        k=33,
-    )))
-    trainer.train()
+
+    k = 1
+
+    with Trainer(TrainingArgs(
+        model_args=ModelArgs(k=k),
+    )) as trainer:
+        trainer.train()
+
+        path = f"data/run-k-{k}.pth"
+        t.save(trainer.model.state_dict(), path)
+        print(f"saved to {path=}")
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()
