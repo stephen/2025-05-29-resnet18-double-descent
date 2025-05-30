@@ -1,3 +1,4 @@
+import argparse
 from datetime import datetime
 import multiprocessing as mp
 import sys
@@ -56,12 +57,12 @@ def make_resnet18(args: ModelArgs) -> torchvision.models.ResNet:
     return model # type: ignore
 
 class Trainer:
-    def __init__(self, args: TrainingArgs, device: t.device = default_device):
+    def __init__(self, args: TrainingArgs):
         self.args = args
         pass
 
     def setup(self):
-        self.model = make_resnet18(self.args.model_args).to(default_device)
+        self.model = make_resnet18(self.args.model_args).to(self.args.device)
         self.optimizer = t.optim.Adam(self.model.parameters(), lr=1e-4)
         self.train_set = DataLoader(train_set, batch_size=self.args.batch_size, shuffle=True)
         self.test_set = DataLoader(test_set, batch_size=self.args.batch_size * 2, shuffle=False)
@@ -78,7 +79,7 @@ class Trainer:
 
     def teardown(self):
         del self.train_set, self.test_set, self.optimizer, self.model
-        if default_device.type == "cuda":
+        if self.args.device.type == "cuda":
             t.cuda.empty_cache()
 
     def __enter__(self):
@@ -90,7 +91,7 @@ class Trainer:
         return False
 
     def train_epoch(self, imgs: Float[t.Tensor, "b c w h"], labels: Float[t.Tensor, "b"]): # type: ignore
-        imgs, labels = imgs.to(default_device), labels.to(default_device)
+        imgs, labels = imgs.to(self.args.device), labels.to(self.args.device)
 
         logits = self.model(imgs)
 
@@ -112,7 +113,7 @@ class Trainer:
         correct, total, losses = 0.0, 0.0, []
 
         for imgs, labels in tqdm(self.test_set, desc="evaluating"):
-            imgs, labels = imgs.to(default_device), labels.to(default_device)
+            imgs, labels = imgs.to(self.args.device), labels.to(self.args.device)
             logits = self.model(imgs)
 
             losses.append(t.nn.functional.cross_entropy(logits, labels).item())
@@ -146,7 +147,8 @@ class Trainer:
         wandb.finish()
 
 def train(args: TrainingArgs, rank: int):
-    args.device = t.device(f"cuda:{rank}") if t.cuda.is_available() else default_device
+    if t.cuda.is_available():
+        args.device = t.device(f"cuda:{rank}")
 
     with Trainer(args) as trainer:
         trainer.train()
@@ -156,11 +158,11 @@ def train(args: TrainingArgs, rank: int):
         print(f"saved to {path=}")
 
 def main():
-    print("running on", default_device)
-    print("checking that tensors work", t.ones((1, 2, 3)).to(default_device).bool().all())
-
     gpu_count = t.cuda.device_count() if t.cuda.is_available() else 4 # if mps, we fake it.
+
+    print("starting on", default_device)
     print("gpu count:", gpu_count)
+    print("checking that tensors work", t.ones((1, 2, 3)).to(default_device).bool().all())
 
     run_group_name = datetime.now().strftime('%Y-%m-%dT%H-%M-%S')
 
@@ -175,6 +177,9 @@ def main():
         )
         for k in range(1, 65)
     ]
+
+    if t.cuda.is_available():
+        mp.set_start_method("spawn") # cuda gets unhappy with fork.
 
     with mp.Pool(processes=gpu_count) as pool:
         pool.starmap(train, jobs)
