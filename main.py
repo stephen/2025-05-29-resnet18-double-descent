@@ -10,7 +10,7 @@ from pathlib import Path
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import wandb
-from typing import Optional
+from typing import Callable, Optional
 
 from resnet18 import ResNet
 
@@ -42,6 +42,7 @@ class TrainingArgs:
     model_args: ModelArgs = field(default_factory=ModelArgs)
     batch_size: int = 128
     epochs: int = 4_000
+    rank: int = 0
 
     wandb_group_name: Optional[str] = None
     wandb_run_name: Optional[str] = None
@@ -59,6 +60,12 @@ def make_resnet18(args: ModelArgs) -> torchvision.models.ResNet:
 class Trainer:
     def __init__(self, args: TrainingArgs):
         self.args = args
+
+        self.tqdm_args: Callable[[str], dict] = lambda desc: {
+            'position': self.args.rank,
+            'desc': f"{desc} k={self.args.model_args.k}",
+            'leave': False,
+        }
         pass
 
     def setup(self):
@@ -112,7 +119,7 @@ class Trainer:
 
         correct, total, losses = 0.0, 0.0, []
 
-        for imgs, labels in tqdm(self.test_set, desc="evaluating"):
+        for imgs, labels in self.test_set:
             imgs, labels = imgs.to(self.args.device), labels.to(self.args.device)
             logits = self.model(imgs)
 
@@ -129,26 +136,27 @@ class Trainer:
 
         test_accuracy = self.evaluate()
 
-        for epoch in tqdm(range(self.args.epochs), desc="epochs"):
-            pbar = tqdm(self.train_set, desc="training")
+        for epoch in tqdm(range(self.args.epochs), **self.tqdm_args("epochs")):
             self.model.train()
             train_loss = 0.0
-            for imgs, labels in pbar:
+            for imgs, labels in self.train_set:
                 train_loss = self.train_epoch(imgs, labels)
-                pbar.set_postfix(loss=f"{train_loss:.3f}", ex_seen=f"{self.samples_trained:06}")
 
                 wandb.log({"train_loss": train_loss, "lr": self.optimizer.param_groups[0]['lr']}, step=self.samples_trained)
 
             test_loss, test_accuracy = self.evaluate()
 
-            pbar.set_postfix(loss=f"{train_loss:.3f}", accuracy=f"{test_accuracy:.2f}", ex_seen=f"{self.samples_trained:06}")
             wandb.log({"test_accuracy": test_accuracy, "test_loss": test_loss, "epoch": epoch}, step=self.samples_trained)
 
         wandb.finish()
 
-def train(args: TrainingArgs, rank: int):
+def train(args: TrainingArgs):
+    # hack: figure out what mp.pool index we are.
+    rank = mp.current_process()._identity[0] - 1
+
+    args.rank = rank
     if t.cuda.is_available():
-        args.device = t.device(f"cuda:{rank}")
+        args.device = t.device(f"cuda:{args.rank}")
 
     with Trainer(args) as trainer:
         trainer.train()
@@ -167,20 +175,16 @@ def main():
     gpu_count = t.cuda.device_count() if t.cuda.is_available() else 4 # if mps, we fake it.
 
     print("starting on", default_device)
-    print("gpu count:", gpu_count)
-    print("jobs per gpu:", args.jobs_per_gpu)
+    print("gpu count:", gpu_count, "jobs per gpu:", args.jobs_per_gpu, "total parallelism:", gpu_count * args.jobs_per_gpu)
     print("checking that tensors work", t.ones((1, 2, 3)).to(default_device).bool().all())
 
     run_group_name = datetime.now().strftime('%Y-%m-%dT%H-%M-%S')
 
     jobs = [
-        (
-            TrainingArgs(
-                model_args=ModelArgs(k=k),
-                wandb_group_name=run_group_name,
-                wandb_run_name=f"{k=}",
-            ),
-            k % gpu_count,
+        TrainingArgs(
+            model_args=ModelArgs(k=k),
+            wandb_group_name=run_group_name,
+            wandb_run_name=f"{k=}",
         )
         for k in range(1, 65)
     ]
@@ -189,7 +193,7 @@ def main():
         mp.set_start_method("spawn") # cuda gets unhappy with fork.
 
     with mp.Pool(processes=gpu_count * args.jobs_per_gpu) as pool:
-        pool.starmap(train, jobs)
+        pool.map(train, jobs)
 
     print("group:", run_group_name)
     print("ended at:", datetime.now().strftime('%Y-%m-%dT%H-%M-%S'))
