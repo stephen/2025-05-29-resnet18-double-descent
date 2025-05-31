@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import wandb
 from typing import Callable, Optional
+import numpy as np
 
 from resnet18 import ResNet
 
@@ -34,13 +35,22 @@ TEST_TRANSFORM = torchvision.transforms.Compose(
     ]
 )
 
-def get_cifar() -> tuple[torchvision.datasets.cifar.CIFAR10, torchvision.datasets.cifar.CIFAR10]:
+def get_cifar(noise_rate: float = 0.0) -> tuple[torchvision.datasets.cifar.CIFAR10, torchvision.datasets.cifar.CIFAR10]:
     training = torchvision.datasets.CIFAR10(Path.cwd() / "data", download=True, train=True, transform=TRAIN_TRANSFORM)
+
+    if noise_rate != 0.0:
+        labels = np.array([training[i][1] for i in range(len(training))])
+        label_count = len(labels)
+        picks = np.random.choice(label_count, int(label_count * noise_rate), replace=False)
+        print(f"introducing {noise_rate:.2%} noise, {len(picks)} labels")
+        for i in picks:
+            labels[i] = np.random.choice([c for c in range(10) if c != labels[i]])
+    else:
+        print("no noise")
+
     testing = torchvision.datasets.CIFAR10(Path.cwd() / "data", download=True, train=False, transform=TEST_TRANSFORM)
 
     return training, testing
-
-train_set, test_set = get_cifar()
 
 @dataclass
 class ModelArgs:
@@ -53,6 +63,7 @@ class TrainingArgs:
     batch_size: int = 128
     epochs: int = 4_000
     rank: int = 0
+    label_noise: float = 0.0
 
     wandb_group_name: Optional[str] = None
     wandb_run_name: Optional[str] = None
@@ -79,6 +90,8 @@ class Trainer:
         pass
 
     def setup(self):
+        train_set, test_set = get_cifar(self.args.label_noise)
+
         self.model = make_resnet18(self.args.model_args).to(self.args.device)
         self.optimizer = t.optim.Adam(self.model.parameters(), lr=1e-4)
         self.train_set = DataLoader(train_set, batch_size=self.args.batch_size, shuffle=True)
@@ -170,21 +183,20 @@ def train(args: TrainingArgs):
     with Trainer(args) as trainer:
         trainer.train()
 
-        path = f"data/run-k-{args.model_args.k}.pth"
+        path = f"data/run-k-{args.model_args.k}-noise-{noise}.pth"
         t.save(trainer.model.state_dict(), path)
         print(f"saved to {path=}")
-
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--jobs-per-gpu', type=int, default=1, help='How many jobs to run per gpu (default=1)')
-    parser.add_argument('--full', type=bool, default=False, help='Run all k=1...64 or run k=1, 2, 4, ...64')
-    return parser.parse_args()
 
 def main():
     if t.cuda.is_available():
         mp.set_start_method("spawn") # cuda gets unhappy with fork.
 
-    args = parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--noise', type=float, default=0.0, help='How much noise to apply')
+    parser.add_argument('--jobs-per-gpu', type=int, default=1, help='How many jobs to run per gpu (default=1)')
+    parser.add_argument('--full', type=bool, default=False, help='Run all k=1...64 or run k=1, 2, 4, ...64')
+    args = parser.parse_args()
+
     gpu_count = t.cuda.device_count() if t.cuda.is_available() else 4 # if mps, we fake it.
 
     print("starting on", default_device)
@@ -199,10 +211,12 @@ def main():
             model_args=ModelArgs(k=k),
             wandb_group_name=run_group_name,
             wandb_run_name=f"{k=}",
+            label_noise=args.noise,
             rank=i%gpu_count,
         )
         for i, k in enumerate(k_set)
     ]
+    print(f"{k_set=}")
 
     with mp.Pool(processes=gpu_count * args.jobs_per_gpu) as pool:
         pool.map(train, jobs)
