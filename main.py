@@ -62,7 +62,7 @@ class Trainer:
         self.args = args
 
         self.tqdm_args: Callable[[str], dict] = lambda desc: {
-            'position': self.args.rank,
+            'position': self.args.model_args.k,
             'desc': f"{desc} k={self.args.model_args.k}",
             'leave': False,
         }
@@ -152,9 +152,8 @@ class Trainer:
 
 def train(args: TrainingArgs):
     # hack: figure out what mp.pool index we are.
-    rank = mp.current_process()._identity[0] - 1
+    print(f"running job k={args.model_args.k}, rank={args.rank}")
 
-    args.rank = rank
     if t.cuda.is_available():
         args.device = t.device(f"cuda:{args.rank}")
 
@@ -185,6 +184,7 @@ def main():
             model_args=ModelArgs(k=k),
             wandb_group_name=run_group_name,
             wandb_run_name=f"{k=}",
+            rank=k%gpu_count,
         )
         for k in range(1, 65)
     ]
