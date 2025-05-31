@@ -14,7 +14,7 @@ from typing import Callable, Optional
 
 from resnet18 import ResNet
 
-default_device = t.device('mps') if t.backends.mps.is_available() else t.device('cpu')
+default_device = t.device('mps') if t.backends.mps.is_available() else t.device('cuda') if t.cuda.is_available() else t.device('cpu')
 
 TRANSFORM = torchvision.transforms.Compose(
     [
