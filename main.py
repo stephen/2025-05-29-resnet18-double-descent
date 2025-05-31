@@ -177,9 +177,13 @@ def train(args: TrainingArgs):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--jobs-per-gpu', type=int, default=1, help='How many jobs to run per gpu (default=1)')
+    parser.add_argument('--full', type=bool, default=False, help='Run all k=1...64 or run k=1, 2, 4, ...64')
     return parser.parse_args()
 
 def main():
+    if t.cuda.is_available():
+        mp.set_start_method("spawn") # cuda gets unhappy with fork.
+
     args = parse_args()
     gpu_count = t.cuda.device_count() if t.cuda.is_available() else 4 # if mps, we fake it.
 
@@ -189,18 +193,16 @@ def main():
 
     run_group_name = datetime.now().strftime('%Y-%m-%dT%H-%M-%S')
 
+    k_set = range(1, 65) if args.full else [2**x for x in range(0, 7)]
     jobs = [
         TrainingArgs(
             model_args=ModelArgs(k=k),
             wandb_group_name=run_group_name,
             wandb_run_name=f"{k=}",
-            rank=k%gpu_count,
+            rank=i%gpu_count,
         )
-        for k in range(1, 65)
+        for i, k in enumerate(k_set)
     ]
-
-    if t.cuda.is_available():
-        mp.set_start_method("spawn") # cuda gets unhappy with fork.
 
     with mp.Pool(processes=gpu_count * args.jobs_per_gpu) as pool:
         pool.map(train, jobs)
