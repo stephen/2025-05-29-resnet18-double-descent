@@ -157,11 +157,18 @@ def train(args: TrainingArgs, rank: int):
         t.save(trainer.model.state_dict(), path)
         print(f"saved to {path=}")
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--jobs-per-gpu', type=int, default=1, help='How many jobs to run per gpu (default=1)')
+    return parser.parse_args()
+
 def main():
+    args = parse_args()
     gpu_count = t.cuda.device_count() if t.cuda.is_available() else 4 # if mps, we fake it.
 
     print("starting on", default_device)
     print("gpu count:", gpu_count)
+    print("jobs per gpu:", args.jobs_per_gpu)
     print("checking that tensors work", t.ones((1, 2, 3)).to(default_device).bool().all())
 
     run_group_name = datetime.now().strftime('%Y-%m-%dT%H-%M-%S')
@@ -181,7 +188,7 @@ def main():
     if t.cuda.is_available():
         mp.set_start_method("spawn") # cuda gets unhappy with fork.
 
-    with mp.Pool(processes=gpu_count) as pool:
+    with mp.Pool(processes=gpu_count * args.jobs_per_gpu) as pool:
         pool.starmap(train, jobs)
 
     print("group:", run_group_name)
