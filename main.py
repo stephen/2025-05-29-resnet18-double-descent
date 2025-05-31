@@ -16,7 +16,17 @@ from resnet18 import ResNet
 
 default_device = t.device('mps') if t.backends.mps.is_available() else t.device('cuda') if t.cuda.is_available() else t.device('cpu')
 
-TRANSFORM = torchvision.transforms.Compose(
+TRAIN_TRANSFORM = torchvision.transforms.Compose(
+    [
+        torchvision.transforms.ToTensor(),
+        torchvision.transforms.RandomCrop(32, padding=4),
+        torchvision.transforms.RandomHorizontalFlip(),
+        # https://github.com/kuangliu/pytorch-cifar/issues/19
+        torchvision.transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.247, 0.243, 0.261]),
+    ]
+)
+
+TEST_TRANSFORM = torchvision.transforms.Compose(
     [
         torchvision.transforms.ToTensor(),
         # https://github.com/kuangliu/pytorch-cifar/issues/19
@@ -25,8 +35,8 @@ TRANSFORM = torchvision.transforms.Compose(
 )
 
 def get_cifar() -> tuple[torchvision.datasets.cifar.CIFAR10, torchvision.datasets.cifar.CIFAR10]:
-    training = torchvision.datasets.CIFAR10(Path.cwd() / "data", download=True, train=True, transform=TRANSFORM)
-    testing = torchvision.datasets.CIFAR10(Path.cwd() / "data", download=True, train=False, transform=TRANSFORM)
+    training = torchvision.datasets.CIFAR10(Path.cwd() / "data", download=True, train=True, transform=TRAIN_TRANSFORM)
+    testing = torchvision.datasets.CIFAR10(Path.cwd() / "data", download=True, train=False, transform=TEST_TRANSFORM)
 
     return training, testing
 
