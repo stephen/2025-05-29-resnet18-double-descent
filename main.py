@@ -201,7 +201,7 @@ def main():
     parser.add_argument('--full', type=bool, default=False, help='Run all k=1...64 or run k=1, 2, 4, ...64')
     args = parser.parse_args()
 
-    gpu_count = t.cuda.device_count() if t.cuda.is_available() else 4 # if mps, we fake it.
+    gpu_count = t.cuda.device_count() if t.cuda.is_available() else 1
 
     print("starting on", default_device)
     print("gpu count:", gpu_count, "jobs per gpu:", args.jobs_per_gpu, "total parallelism:", gpu_count * args.jobs_per_gpu)
