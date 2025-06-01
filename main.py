@@ -53,6 +53,9 @@ def get_cifar(noise_rate: float = 0.0) -> tuple[torchvision.datasets.cifar.CIFAR
 
     return training, testing
 
+# get_cifar once at the start to prevent multiple workers from downloading separately.
+get_cifar()
+
 @dataclass
 class ModelArgs:
     num_classes: int = 10
