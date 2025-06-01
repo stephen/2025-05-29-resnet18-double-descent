@@ -1,6 +1,7 @@
 import argparse
 from datetime import datetime
 import multiprocessing as mp
+import random
 import sys
 from jaxtyping import Float
 from dataclasses import asdict, dataclass, field
@@ -209,6 +210,8 @@ def main():
 
     run_group_name = datetime.now().strftime('%Y-%m-%dT%H-%M-%S')
 
+    # instead of loading jobs starting from gpu 0, randomly pick start offset.
+    random_start = random.randint(0, gpu_count - 1)
     k_set = range(1, 65) if args.full else [2**x for x in range(0, 7)]
     jobs = [
         TrainingArgs(
@@ -216,7 +219,7 @@ def main():
             wandb_group_name=run_group_name,
             wandb_run_name=f"{k=}",
             label_noise=args.noise,
-            rank=i%gpu_count,
+            rank=(i + random_start)%gpu_count,
         )
         for i, k in enumerate(k_set)
     ]
