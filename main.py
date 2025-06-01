@@ -155,8 +155,6 @@ class Trainer:
         return loss, accuracy
 
     def train(self):
-        self.setup()
-
         test_accuracy = self.evaluate()
 
         for epoch in tqdm(range(self.args.epochs), **self.tqdm_args("epochs")):
