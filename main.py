@@ -171,7 +171,18 @@ class Trainer:
 
             wandb.log({"test_accuracy": test_accuracy, "test_loss": test_loss, "epoch": epoch}, step=self.samples_trained)
 
+        file = f"run-k-{self.args.model_args.k}-noise-{self.args.label_noise}"
+        path = f"data/{file}.pth"
+        t.save(self.model.state_dict(), path)
+        print(f"saved to {path=}")
+
+        artifact = wandb.Artifact(file, type="model")
+        artifact.add_file(path)
+        wandb.log_artifact(artifact)
+
         wandb.finish()
+
+
 
 def train(args: TrainingArgs):
     # hack: figure out what mp.pool index we are.
@@ -182,11 +193,6 @@ def train(args: TrainingArgs):
 
     with Trainer(args) as trainer:
         trainer.train()
-
-        path = f"data/run-k-{args.model_args.k}-noise-{noise}.pth"
-        t.save(trainer.model.state_dict(), path)
-        print(f"saved to {path=}")
-
 def main():
     if t.cuda.is_available():
         mp.set_start_method("spawn") # cuda gets unhappy with fork.
