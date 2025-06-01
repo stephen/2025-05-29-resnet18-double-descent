@@ -60,8 +60,7 @@ class ResNet(t.nn.Module):
         super().__init__()
         self.inplanes = k
 
-        self.conv1 = t.nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
-        self.maxpool = t.nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.conv1 = t.nn.Conv2d(3, self.inplanes, kernel_size=3, stride=1, padding=1, bias=False)
 
         self.layer1 = self._make_layer(k, layers[0])
         self.layer2 = self._make_layer(k*2, layers[1], stride=2)
