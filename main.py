@@ -170,7 +170,6 @@ class Trainer:
                 wandb.log({"train_loss": train_loss, "lr": self.optimizer.param_groups[0]['lr']}, step=self.samples_trained)
 
             test_loss, test_accuracy = self.evaluate()
-
             wandb.log({"test_accuracy": test_accuracy, "test_loss": test_loss, "epoch": epoch}, step=self.samples_trained)
 
         file = f"run-k-{self.args.model_args.k}-noise-{self.args.label_noise}"
@@ -202,7 +201,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--noise', type=float, default=0.0, help='How much noise to apply')
     parser.add_argument('--jobs-per-gpu', type=int, default=1, help='How many jobs to run per gpu (default=1)')
-    parser.add_argument('--full', type=bool, default=False, help='Run all k=1...64 or run k=1, 2, 4, ...64')
+    parser.add_argument('--full', action='store_true', default=False, help='Run all k=1...64 or run k=1, 2, 4, ...64')
     args = parser.parse_args()
 
     gpu_count = t.cuda.device_count() if t.cuda.is_available() else 1
