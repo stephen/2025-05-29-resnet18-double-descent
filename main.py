@@ -158,7 +158,8 @@ class Trainer:
         return loss, accuracy
 
     def train(self):
-        test_accuracy = self.evaluate()
+        test_loss, test_accuracy = self.evaluate()
+        wandb.log({"test_accuracy": test_accuracy, "test_loss": test_loss, "epoch": 0}, step=self.samples_trained)
 
         for epoch in tqdm(range(self.args.epochs), **self.tqdm_args("epochs")):
             self.model.train()
