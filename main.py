@@ -40,14 +40,13 @@ def get_cifar(noise_rate: float = 0.0) -> tuple[torchvision.datasets.cifar.CIFAR
     training = torchvision.datasets.CIFAR10(Path.cwd() / "data", download=True, train=True, transform=TRAIN_TRANSFORM)
 
     if noise_rate != 0.0:
-        labels = np.array([training[i][1] for i in range(len(training))])
+        labels = np.array(training.targets)
         label_count = len(labels)
         picks = np.random.choice(label_count, int(label_count * noise_rate), replace=False)
         print(f"introducing {noise_rate:.2%} noise, {len(picks)} labels")
         for i in picks:
             labels[i] = np.random.choice([c for c in range(10) if c != labels[i]])
-    else:
-        print("no noise")
+        training.targets = labels.tolist()
 
     testing = torchvision.datasets.CIFAR10(Path.cwd() / "data", download=True, train=False, transform=TEST_TRANSFORM)
 
